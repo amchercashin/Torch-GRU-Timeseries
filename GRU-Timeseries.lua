@@ -1,6 +1,5 @@
 require 'torch'
 require 'rnn'
-require 'gnuplot'
 display = require 'display'
 
 
@@ -9,20 +8,22 @@ gpu=1
 
 --nIters = 2000
 batchSize = 8
-rho = 10
-hiddenSize = 100
+rho = 100
+hiddenSize = 200
 nFeatures = 2
 nOutput = nFeatures  --TODO make possible to set Nfeatures and nOutput to different values
-lr = 0.009
+lr = 0.0003
 train_part = 0.9
-validate_each_steps = 10 --get validation error each validate_each_steps steps
+validate_each_steps = 100 --get validation error each validate_each_steps steps
 -------------------
 
 ---NN-defenition---
 rnn = nn.Sequential()
    :add(nn.Linear(nFeatures, hiddenSize))
+   --:add(nn.NormStabilizer())
    :add(nn.GRU(hiddenSize, hiddenSize))
-   :add(nn.NormStabilizer())
+   --:add(nn.NormStabilizer())
+   --:add(nn.GRU(hiddenSize, hiddenSize))
    :add(nn.Linear(hiddenSize, nOutput))
    --:add(nn.HardTanh())
 rnn = nn.Sequencer(rnn)
@@ -34,15 +35,15 @@ criterion = nn.SequencerCriterion(criterion)
 ---------------------
 
 ----Make-some-data---
-timesteps = 2000
+timesteps = 4000
 timeseq = torch.Tensor(nFeatures, timesteps) --timeseries, nFeatures x timesteps
 --timeseq[1] = torch.cos(torch.linspace(0, 200, timesteps))
 timeseq[1] = torch.add(
                       torch.cmul(
-                                torch.cos(torch.linspace(0, 200, timesteps)), 
-                                torch.linspace(0, 15, timesteps)), 
-                      torch.linspace(0, 15, timesteps))
-timeseq[2] = torch.linspace(0, 200, timesteps)
+                                torch.cos(torch.linspace(0, timesteps/4, timesteps)), 
+                                torch.linspace(0, timesteps/4, timesteps)), 
+                      torch.linspace(0, timesteps/4, timesteps))
+timeseq[2] = torch.linspace(0, timesteps/4, timesteps)
 
 ---Normalize-data---
 means, sds = {}, {}
@@ -92,7 +93,7 @@ if gpu>0 then
  -- predictions = predictions:cuda()
 end
 --------------------
-
+rnn:training()
 for iteration = 1, maxIteration do --redo later, can leave some slices aside because of floor   
    local inputs = all_slices:index(1, train_input_indeces):narrow(1, 1+(iteration-1)*batchSize, batchSize) --consequently scan through shuffled slices
    local targets = all_slices:index(1, train_target_indeces):narrow(1, 1+(iteration-1)*batchSize, batchSize)
@@ -130,12 +131,34 @@ end
 
 display.plot(errors)
 
-predictions = rnn:forward( all_slices:index(1, val_input_indeces):transpose(1,3):transpose(2,3)[{ {},{max_slices - max_train_slices - 1},{} }] )--predict values for last slice from validation set
-predictions = predictions:resize(rho, 2)[{ {},{1} }] * sds[1] + means[1] --take only first feature, resize, rescale
-real_values = all_slices[max_slices][1] * sds[1] + means[1]
-display.plot(torch.cat(torch.cat(torch.linspace(1, rho, rho):cuda(),
-                                 real_values, 2
+---Reconstrukt timeseries from 1st validation slice into the future
+rnn:evaluate()
+npoints = max_slices - max_train_slices - 1     --number of data points to generate
+predicted_points = torch.LongTensor(npoints):cuda()
+for iteration = 1, npoints do
+  if iteration == 1 then 
+    outputs = all_slices:index(1, val_input_indeces):transpose(1,3):transpose(2,3)[{ {},{1},{} }] --take 1st validation slice as initial input
+  end
+  --rnn:zeroGradParameters()
+  outputs = rnn:forward(outputs)
+  predicted_points[iteration] = outputs[{ {-1},{},{1} }] * sds[1] + means[1]  --take last value from 1st feature predictions, rescale
+  
+end
+
+real_values = timeseq[1][{ {-npoints,-1} }] * sds[1] + means[1] --last npoints from initial sequence, 1st feature
+display.plot(torch.cat(torch.cat(torch.linspace(1, npoints, npoints):cuda(),
+                                 real_values:cuda(), 2
                                  ), 
-                      predictions,2
-                      )
+                      predicted_points, 2
+                    )
             )
+
+--predictions = rnn:forward( all_slices:index(1, val_input_indeces):transpose(1,3):transpose(2,3)[{ {},{max_slices - max_train_slices - 1},{} }] )--predict values for last slice from validation set
+--predictions = predictions:resize(rho, 2)[{ {},{1} }] * sds[1] + means[1] --take only first feature, resize, rescale
+--real_values = all_slices[max_slices][1] * sds[1] + means[1]
+--display.plot(torch.cat(torch.cat(torch.linspace(1, rho, rho):cuda(),
+--                                 real_values, 2
+--                                 ), 
+--                      predictions,2
+--                      )
+--           )
