@@ -2,7 +2,6 @@ require 'torch'
 require 'rnn'
 display = require 'display'
 
-
 ----Options-------
 gpu=1
 
@@ -12,7 +11,7 @@ rho = 100
 hiddenSize = 200
 nFeatures = 2
 nOutput = nFeatures  --TODO make possible to set Nfeatures and nOutput to different values
-lr = 0.0003
+lr = 0.0001
 train_part = 0.9
 validate_each_steps = 100 --get validation error each validate_each_steps steps
 -------------------
@@ -93,6 +92,8 @@ if gpu>0 then
  -- predictions = predictions:cuda()
 end
 --------------------
+require 'optim'
+local params, gradParams = rnn:getParameters()
 rnn:training()
 for iteration = 1, maxIteration do --redo later, can leave some slices aside because of floor   
    local inputs = all_slices:index(1, train_input_indeces):narrow(1, 1+(iteration-1)*batchSize, batchSize) --consequently scan through shuffled slices
@@ -101,15 +102,18 @@ for iteration = 1, maxIteration do --redo later, can leave some slices aside bec
    inputs = inputs:transpose(1,3):transpose(2,3) --to seqlength x batchsize x nFeatures shape
    targets = targets:transpose(1,3):transpose(2,3)   
    
-   local outputs = rnn:forward(inputs)
-   local err = criterion:forward(outputs, targets)
-   print(string.format("Iteration %d ; NLL err = %f ", iteration, err))
+   local function feval(params)
+     gradParams:zero()
+     local outputs = rnn:forward(inputs)
+     err = criterion:forward(outputs, targets)
+     print(string.format("Iteration %d ; NLL err = %f ", iteration, err))
+     local gradOutputs = criterion:backward(outputs, targets)
+     rnn:backward(inputs, gradOutputs)
+     
+     return loss,gradParams
+   end
    
-   rnn:zeroGradParameters()
-   
-   local gradOutputs = criterion:backward(outputs, targets)
-   local gradInputs = rnn:backward(inputs, gradOutputs)
-   rnn:updateParameters(lr)
+   optim.adagrad(feval, params, {learningRate = lr})
    
    if math.fmod(iteration, validate_each_steps) == 0 or iteration == 1 then
      local val_inputs = all_slices:index(1, val_input_indeces) --get all validation set
