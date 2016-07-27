@@ -11,7 +11,7 @@ rho = 100
 hiddenSize = 200
 nFeatures = 2
 nOutput = nFeatures  --TODO make possible to set Nfeatures and nOutput to different values
-lr = 0.0001
+lr = 0.0006
 train_part = 0.9
 validate_each_steps = 100 --get validation error each validate_each_steps steps
 -------------------
