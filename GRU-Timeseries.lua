@@ -8,12 +8,13 @@ gpu=1
 --nIters = 2000
 batchSize = 8
 rho = 100
-hiddenSize = 200
+hiddenSize = 100
 nFeatures = 2
 nOutput = nFeatures  --TODO make possible to set Nfeatures and nOutput to different values
 lr = 0.0006
 train_part = 0.9
 validate_each_steps = 100 --get validation error each validate_each_steps steps
+nFullCycles = 2 --number of grand cycles: passes through all data
 -------------------
 
 ---NN-defenition---
@@ -69,7 +70,7 @@ val_target_indeces = val_input_indeces + 1
 
 ---TRAINING-THE-NETWORK---
 maxIteration = torch.floor(max_train_slices / batchSize)  --max n of iteration to iterate over all data, for could leave some data sequences in the end
-errors = torch.Tensor(maxIteration,3)
+errors = torch.Tensor(maxIteration * nFullCycles,3)
 --predictions = torch.Tensor(val_input_indeces:size(), 2)
 --predictions[1] = torch.linspace(0, val_input_indeces:size(), val_input_indeces:size()) -- to accumulate predictions from validation set of the first time sequence
 --predictions[2] = 
@@ -95,45 +96,53 @@ end
 require 'optim'
 local params, gradParams = rnn:getParameters()
 rnn:training()
-for iteration = 1, maxIteration do --redo later, can leave some slices aside because of floor   
-   local inputs = all_slices:index(1, train_input_indeces):narrow(1, 1+(iteration-1)*batchSize, batchSize) --consequently scan through shuffled slices
-   local targets = all_slices:index(1, train_target_indeces):narrow(1, 1+(iteration-1)*batchSize, batchSize)
-   
-   inputs = inputs:transpose(1,3):transpose(2,3) --to seqlength x batchsize x nFeatures shape
-   targets = targets:transpose(1,3):transpose(2,3)   
-   
-   local function feval(params)
-     gradParams:zero()
-     local outputs = rnn:forward(inputs)
-     err = criterion:forward(outputs, targets)
-     print(string.format("Iteration %d ; NLL err = %f ", iteration, err))
-     local gradOutputs = criterion:backward(outputs, targets)
-     rnn:backward(inputs, gradOutputs)
+for fullCycle = 1, nFullCycles do
+  for iteration = 1, maxIteration do --redo later, can leave some slices aside because of floor   
+     seq_iteration = fullCycle * maxIteration - maxIteration + iteration
+     local inputs = all_slices:index(1, train_input_indeces):narrow(1, 1+(iteration-1)*batchSize, batchSize) --consequently scan through shuffled slices
+     local targets = all_slices:index(1, train_target_indeces):narrow(1, 1+(iteration-1)*batchSize, batchSize)
      
-     return loss,gradParams
-   end
-   
-   optim.adagrad(feval, params, {learningRate = lr})
-   
-   if math.fmod(iteration, validate_each_steps) == 0 or iteration == 1 then
-     local val_inputs = all_slices:index(1, val_input_indeces) --get all validation set
-     local val_targets = all_slices:index(1, val_target_indeces)
+     inputs = inputs:transpose(1,3):transpose(2,3) --to seqlength x batchsize x nFeatures shape
+     targets = targets:transpose(1,3):transpose(2,3)   
      
-     val_inputs = val_inputs:transpose(1,3):transpose(2,3) --to seqlength x batchsize x nFeatures shape
-     val_targets = val_targets:transpose(1,3):transpose(2,3)     
+     local function feval(params)
+       gradParams:zero()
+       local outputs = rnn:forward(inputs)
+       err = criterion:forward(outputs, targets)
+       print(string.format("Iteration %d ; NLL err = %f ", seq_iteration, err))
+       local gradOutputs = criterion:backward(outputs, targets)
+       rnn:backward(inputs, gradOutputs)
+       
+       return loss,gradParams
+     end
      
-     local val_outputs = rnn:forward(val_inputs)
-     val_err = criterion:forward(val_outputs, val_targets)
-     print(string.format("VALIDATION ERROR = %f ", val_err))          
-   end   
-   
-   errors[{ {iteration}, {1} }] = iteration
-   errors[{ {iteration}, {2} }] = err
-   errors[{ {iteration}, {3} }] = val_err
+     optim.adagrad(feval, params, {learningRate = lr})
+     
+     if math.fmod(seq_iteration, validate_each_steps) == 0 or seq_iteration == 1 then
+       local val_inputs = all_slices:index(1, val_input_indeces) --get all validation set
+       local val_targets = all_slices:index(1, val_target_indeces)
+       
+       val_inputs = val_inputs:transpose(1,3):transpose(2,3) --to seqlength x batchsize x nFeatures shape
+       val_targets = val_targets:transpose(1,3):transpose(2,3)     
+       
+       local val_outputs = rnn:forward(val_inputs)
+       val_err = criterion:forward(val_outputs, val_targets)
+       print(string.format("VALIDATION ERROR = %f ", val_err))          
+     end   
+     
+     errors[{ {seq_iteration}, {1} }] = seq_iteration
+     errors[{ {seq_iteration}, {2} }] = err
+     errors[{ {seq_iteration}, {3} }] = val_err
+  end
 end
 ------------------------
-
-display.plot(errors)
+local config1 = {
+  title = "Loss over time",
+  --labels = {"Validation", "Prediction"},
+  xlabel = "iretarion",
+  logscale = true,
+}
+display.plot(errors, config1)
 
 ---Reconstrukt timeseries from 1st validation slice into the future
 rnn:evaluate()
@@ -150,12 +159,18 @@ for iteration = 1, npoints do
 end
 
 real_values = timeseq[1][{ {-npoints,-1} }] * sds[1] + means[1] --last npoints from initial sequence, 1st feature
+local config2 = {
+  title = "Validation vs Prediction",
+  --labels = {"Validation", "Prediction"},
+  xlabel = "iretarion",
+  --logscale = true,
+}
 display.plot(torch.cat(torch.cat(torch.linspace(1, npoints, npoints):cuda(),
                                  real_values:cuda(), 2
                                  ), 
                       predicted_points, 2
                     )
-            )
+            , config2)
 
 --predictions = rnn:forward( all_slices:index(1, val_input_indeces):transpose(1,3):transpose(2,3)[{ {},{max_slices - max_train_slices - 1},{} }] )--predict values for last slice from validation set
 --predictions = predictions:resize(rho, 2)[{ {},{1} }] * sds[1] + means[1] --take only first feature, resize, rescale
