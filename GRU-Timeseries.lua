@@ -2,19 +2,26 @@ require 'torch'
 require 'rnn'
 display = require 'display'
 
+----Make-some-data---
+
+local dataLoader = require("./DataLoad")
+--local timeseq = dataLoader.makeData(5000)
+local timeseq = dataLoader.loadData()
+---------------------
+
 ----Options-------
 gpu=1
 
 --nIters = 2000
-batchSize = 8
-rho = 100
+batchSize = 20
+rho = 60
 hiddenSize = 100
-nFeatures = 2
+nFeatures = timeseq:size()[1]
 nOutput = nFeatures  --TODO make possible to set Nfeatures and nOutput to different values
-lr = 0.0006
+lr = 0.0001
 train_part = 0.9
 validate_each_steps = 100 --get validation error each validate_each_steps steps
-nFullCycles = 2 --number of grand cycles: passes through all data
+nFullCycles = 5 --number of grand cycles: passes through all data
 -------------------
 
 ---NN-defenition---
@@ -24,6 +31,10 @@ rnn = nn.Sequential()
    :add(nn.GRU(hiddenSize, hiddenSize))
    --:add(nn.NormStabilizer())
    --:add(nn.GRU(hiddenSize, hiddenSize))
+   --:add(nn.NormStabilizer())
+   --:add(nn.ReLU())
+   --:add(nn.Linear(hiddenSize, 10))
+   --:add(nn.ReLU())
    :add(nn.Linear(hiddenSize, nOutput))
    --:add(nn.HardTanh())
 rnn = nn.Sequencer(rnn)
@@ -34,16 +45,7 @@ criterion = nn.MSECriterion()
 criterion = nn.SequencerCriterion(criterion)
 ---------------------
 
-----Make-some-data---
-timesteps = 4000
-timeseq = torch.Tensor(nFeatures, timesteps) --timeseries, nFeatures x timesteps
---timeseq[1] = torch.cos(torch.linspace(0, 200, timesteps))
-timeseq[1] = torch.add(
-                      torch.cmul(
-                                torch.cos(torch.linspace(0, timesteps/4, timesteps)), 
-                                torch.linspace(0, timesteps/4, timesteps)), 
-                      torch.linspace(0, timesteps/4, timesteps))
-timeseq[2] = torch.linspace(0, timesteps/4, timesteps)
+
 
 ---Normalize-data---
 means, sds = {}, {}
@@ -116,7 +118,7 @@ for fullCycle = 1, nFullCycles do
        return loss,gradParams
      end
      
-     optim.adagrad(feval, params, {learningRate = lr})
+     optim.sgd(feval, params, {learningRate = lr})
      
      if math.fmod(seq_iteration, validate_each_steps) == 0 or seq_iteration == 1 then
        local val_inputs = all_slices:index(1, val_input_indeces) --get all validation set
