@@ -12,7 +12,7 @@ local dataLoader = require("./DataLoad")
 local timeseq = dataLoader.loadData()
 
 local rho = 50
-local eval_part = 0.1
+local eval_part = 0.05
 local nFeatures = timeseq:size()[1]
 
 --Normalize with means and sds from training
@@ -32,11 +32,12 @@ npoints = val_input_indeces:size()[1]     --number of data points to generate
 
 predicted_points = torch.LongTensor(npoints):cuda()
 --rnn = rnn:cuda()
-all_slices = all_slices:cuda()
-val_input_indeces = val_input_indeces:cuda()
+--all_slices = all_slices:cuda()
+--val_input_indeces = val_input_indeces:cuda()
 rnn:evaluate()
 --for iteration = 1, npoints do
 local inputs = all_slices:index(1, val_input_indeces):transpose(1,3):transpose(2,3) --take all validation slices as initial input, make appropriate format
+inputs = inputs:cuda()
 
 local outputs = rnn:forward(inputs)
 predicted_points = outputs[{ {-1},{},{1} }] * sds[1] + means[1]  --take last value from 1st feature predictions, rescale
