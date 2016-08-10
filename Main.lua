@@ -14,15 +14,15 @@ timeseq, means, sds = dataLoader.normalize(timeseq) --Normalize data and get row
 gpu=1
 
 --nIters = 2000
-batchSize = 100
+batchSize = 128
 rho = 50
-hiddenSize = 200
+hiddenSize = 80
 nFeatures = timeseq:size()[1]
 nOutput = nFeatures  --TODO make possible to set Nfeatures and nOutput to different values
 lr = 0.0003
-train_part = 0.9
+train_part = 0.98
 validate_each_steps = 100 --get validation error each validate_each_steps steps
-nFullCycles = 10 --number of grand cycles: passes through all data
+nFullCycles = 1 --number of grand cycles: passes through all data
 -------------------
 
 ---NN-defenition---
@@ -54,8 +54,8 @@ max_train_slices = math.floor(max_slices * train_part)
 train_input_indeces = torch.randperm(max_train_slices-1):long() --shuffled indeces 
 train_target_indeces = train_input_indeces + 1                  --targets indeces for inputs
 
-val_input_indeces =  torch.range(max_train_slices+1, max_slices-1):long() -- not shuffled indeces for validation
-val_target_indeces = val_input_indeces + 1
+val_input_indeces =  torch.range(max_train_slices+1, max_slices):long() -- not shuffled indeces for validation
+--val_target_indeces = val_input_indeces + 1
 ----------------------------------
 
 ---TRAINING-THE-NETWORK---
@@ -71,11 +71,11 @@ if gpu>0 then
   
   rnn = rnn:cuda()
   criterion = criterion:cuda()
-  all_slices = all_slices:cuda()
-  train_input_indeces = train_input_indeces:cuda()
-  train_target_indeces = train_target_indeces:cuda()
-  val_input_indeces = val_input_indeces:cuda()
-  val_target_indeces = val_target_indeces:cuda()
+  --all_slices = all_slices:cuda()
+  --train_input_indeces = train_input_indeces:cuda()
+  --train_target_indeces = train_target_indeces:cuda()
+  --val_input_indeces = val_input_indeces:cuda()
+  --val_target_indeces = val_target_indeces:cuda()
   errors = errors:cuda()
  -- predictions = predictions:cuda()
 end
@@ -92,6 +92,9 @@ for fullCycle = 1, nFullCycles do
      inputs = inputs:transpose(1,3):transpose(2,3) --to seqlength x batchsize x nFeatures shape
      targets = targets:transpose(1,3):transpose(2,3)   
      
+     inputs = inputs:cuda()
+     targets = targets:cuda()
+     
      local function feval(params)
        gradParams:zero()
        local outputs = rnn:forward(inputs)
@@ -103,17 +106,20 @@ for fullCycle = 1, nFullCycles do
        return loss,gradParams
      end
      
-     optim.sgd(feval, params, {learningRate = lr})
+     optim.adam(feval, params, {learningRate = lr})
      
      if math.fmod(seq_iteration, validate_each_steps) == 0 or seq_iteration == 1 then
        local val_inputs = all_slices:index(1, val_input_indeces) --get all validation set
-       local val_targets = all_slices:index(1, val_target_indeces)
+       --local val_targets = all_slices:index(1, val_target_indeces)
        
        val_inputs = val_inputs:transpose(1,3):transpose(2,3) --to seqlength x batchsize x nFeatures shape
-       val_targets = val_targets:transpose(1,3):transpose(2,3)     
+       --val_targets = val_targets:transpose(1,3):transpose(2,3)     
        
-       local val_outputs = rnn:forward(val_inputs)
-       val_err = criterion:forward(val_outputs, val_targets)
+       val_inputs = val_inputs:cuda()
+       --val_targets = val_targets:cuda()
+       
+       local val_outputs = rnn:forward(val_inputs[{ {}, {1,-2}, {} }])
+       val_err = criterion:forward(val_outputs, val_inputs[{ {}, {2,-1}, {} }])
        print(string.format("VALIDATION ERROR = %f ", val_err))          
      end   
      
@@ -141,8 +147,9 @@ predicted_points = torch.LongTensor(npoints):cuda()
 for iteration = 1, npoints do
   if iteration == 1 then 
     outputs = all_slices:index(1, val_input_indeces):transpose(1,3):transpose(2,3)[{ {},{1},{} }] --take 1st validation slice as initial input
+    outputs = outputs:cuda()
   end
-  --rnn:zeroGradParameters()
+  
   outputs = rnn:forward(outputs)
   predicted_points[iteration] = outputs[{ {-1},{},{1} }] * sds[1] + means[1]  --take last value from 1st feature predictions, rescale
   
